@@ -1,0 +1,268 @@
+classdef voice_analyzer_app_NI < matlab.apps.AppBase
+
+    % Properties that correspond to app components
+    properties (Access = public)
+        VoiceAnalyzerUIFigure  matlab.ui.Figure
+        P3                     matlab.ui.control.UIAxes
+        P4                     matlab.ui.control.UIAxes
+        Button                 matlab.ui.control.Button
+        Panel                  matlab.ui.container.Panel
+        dBLabel_2              matlab.ui.control.Label
+        result1                matlab.ui.control.NumericEditField
+        dBLabel                matlab.ui.control.Label
+        result2                matlab.ui.control.NumericEditField
+        Panel_2                matlab.ui.container.Panel
+        HzLabel                matlab.ui.control.Label
+        input1                 matlab.ui.control.NumericEditField
+        Label                  matlab.ui.control.Label
+        input2                 matlab.ui.control.NumericEditField
+        Label_3                matlab.ui.control.Label
+        input3                 matlab.ui.control.NumericEditField
+        Label_4                matlab.ui.control.Label
+        input4                 matlab.ui.control.NumericEditField
+        Label_5                matlab.ui.control.Label
+        input5                 matlab.ui.control.NumericEditField
+    end
+
+    methods (Access = private)
+
+        % Callback function: Button, result1, result2
+        function ButtonPushed(app, event)
+            Fs = app.input1.Value;          % 采样率 (例如：10000 Hz)
+             nBits = app.input2.Value;          % 位数 (例如：16位)
+             nChannels = app.input3.Value;       % 声道数 (例如：1表示单声道)
+             deviceID = app.input4.Value;        % 设备ID (例如：1表示默认输入设备)
+            duration =app.input5.Value;      % 录音持续时间（秒）
+            
+             %NI麦克风采集
+             AI = daq.createSession('ni');
+
+             % 在此只用单个麦克风单个通道，如需多个使用注释模板
+             addAnalogInputChannel(AI,'Dev1',0,'Voltage'); %AI+采集卡序列+通道序列
+             % addAnalogInputChannel(AI,'Dev1',0:12,'Microphone'); 
+
+             ch1                 = AI.Channels(1);
+
+             % 单个麦克风灵敏度校正
+             Sensitivity_ch1     = 54.1/1000;
+
+             AI.Rate = Fs;
+             AI.DurationInSeconds = duration;
+             AI;
+             data = AI.startForeground();
+             stop(AI);
+             delete(AI);
+             mic=data;
+             mic = mic * Sensitivity_ch1;   
+             pressure = mic;
+            
+            %功率谱
+             ref_pressure = 20e-6; % 参考压力 (Pa)
+             [V,fx]=pwelch(mic, [],[],[], Fs,'power');
+             power=10*log10(V.^2)/ref_pressure/100000;
+             plot(app.P4,fx,power);
+          
+             % 使用汉宁窗函数
+             window = hann(length(mic));
+             pressure_windowed = mic .* window;
+             fft_pressure = fft(pressure_windowed);
+             % 计算声压级频谱
+             L=length(mic);
+             ref_pressure = 20e-6; % 参考压力 (Pa)
+             SPL = 20 * log10(abs(fft_pressure(1:L/2 + 1)) / ref_pressure);
+             % 计算总声压级OASPL
+             f_min = 20; % 最小频率
+             f_max = 20000; % 最大频率
+             f_range = f_max - f_min; % 频率范围
+             f_idx_min = round(f_min / L * (L/2)); % 最小频率下标
+             f_idx_max = L/2; % 最大频率下标
+             OASPL = 10 * log10(sum(10.^(SPL(f_idx_min:f_idx_max)/10))/f_range);
+             n_f = length(SPL);
+             f=[1:n_f]/10;
+            % 绘制声压级随频率变化的图形
+             plot(app.P3,f,SPL);
+            
+             app.result1.Value=mean(SPL(1:10000));
+             app.result2.Value=mean(power(1:5000));
+        end
+    end
+
+    % App initialization and construction
+    methods (Access = private)
+
+        % Create UIFigure and components
+        function createComponents(app)
+
+            % Create VoiceAnalyzerUIFigure
+            app.VoiceAnalyzerUIFigure = uifigure;
+            app.VoiceAnalyzerUIFigure.Color = [0.9412 0.9412 0.9412];
+            app.VoiceAnalyzerUIFigure.Position = [100 100 976 646];
+            app.VoiceAnalyzerUIFigure.Name = 'Voice Analyzer';
+
+            % Create P3
+            app.P3 = uiaxes(app.VoiceAnalyzerUIFigure);
+            title(app.P3, '声压级变化曲线')
+            xlabel(app.P3, '频率/Hz')
+            ylabel(app.P3, '声压级/dB')
+            app.P3.Position = [63 326 514 267];
+
+            % Create P4
+            app.P4 = uiaxes(app.VoiceAnalyzerUIFigure);
+            title(app.P4, 'Welch功率谱')
+            xlabel(app.P4, '频率/Hz')
+            ylabel(app.P4, '功率级/dB')
+            app.P4.Position = [63 83 503 244];
+
+            % Create Button
+            app.Button = uibutton(app.VoiceAnalyzerUIFigure, 'push');
+            app.Button.ButtonPushedFcn = createCallbackFcn(app, @ButtonPushed, true);
+            app.Button.FontSize = 20;
+            app.Button.FontWeight = 'bold';
+            app.Button.Position = [373 26 166 33];
+            app.Button.Text = '开始测量';
+
+            % Create Panel
+            app.Panel = uipanel(app.VoiceAnalyzerUIFigure);
+            app.Panel.Title = '输出结果';
+            app.Panel.FontWeight = 'bold';
+            app.Panel.FontSize = 20;
+            app.Panel.Position = [618 102 280 158];
+
+            % Create dBLabel_2
+            app.dBLabel_2 = uilabel(app.Panel);
+            app.dBLabel_2.HorizontalAlignment = 'right';
+            app.dBLabel_2.FontSize = 16;
+            app.dBLabel_2.FontWeight = 'bold';
+            app.dBLabel_2.Position = [7 73 113 26];
+            app.dBLabel_2.Text = '稳定声压级/dB';
+
+            % Create result1
+            app.result1 = uieditfield(app.Panel, 'numeric');
+            app.result1.ValueDisplayFormat = '%.3f';
+            app.result1.ValueChangedFcn = createCallbackFcn(app, @ButtonPushed, true);
+            app.result1.FontSize = 16;
+            app.result1.Position = [134 73 135 29];
+
+            % Create dBLabel
+            app.dBLabel = uilabel(app.Panel);
+            app.dBLabel.HorizontalAlignment = 'right';
+            app.dBLabel.FontSize = 16;
+            app.dBLabel.FontWeight = 'bold';
+            app.dBLabel.Position = [7 20 113 26];
+            app.dBLabel.Text = '稳定功率级/dB';
+
+            % Create result2
+            app.result2 = uieditfield(app.Panel, 'numeric');
+            app.result2.ValueDisplayFormat = '%.3f';
+            app.result2.ValueChangedFcn = createCallbackFcn(app, @ButtonPushed, true);
+            app.result2.FontSize = 16;
+            app.result2.Position = [134 20 135 29];
+
+            % Create Panel_2
+            app.Panel_2 = uipanel(app.VoiceAnalyzerUIFigure);
+            app.Panel_2.Title = '采样参数';
+            app.Panel_2.FontWeight = 'bold';
+            app.Panel_2.FontSize = 20;
+            app.Panel_2.Position = [618 335 280 257];
+
+            % Create HzLabel
+            app.HzLabel = uilabel(app.Panel_2);
+            app.HzLabel.HorizontalAlignment = 'right';
+            app.HzLabel.FontSize = 16;
+            app.HzLabel.FontWeight = 'bold';
+            app.HzLabel.Position = [-2 171 113 26];
+            app.HzLabel.Text = '采样频率/Hz';
+
+            % Create input1
+            app.input1 = uieditfield(app.Panel_2, 'numeric');
+            app.input1.ValueDisplayFormat = '%.0f';
+            app.input1.FontSize = 16;
+            app.input1.Position = [133 171 135 29];
+            app.input1.Value = 50000;
+
+            % Create Label
+            app.Label = uilabel(app.Panel_2);
+            app.Label.HorizontalAlignment = 'right';
+            app.Label.FontSize = 16;
+            app.Label.FontWeight = 'bold';
+            app.Label.Position = [38 130 71 26];
+            app.Label.Text = '采样位数';
+
+            % Create input2
+            app.input2 = uieditfield(app.Panel_2, 'numeric');
+            app.input2.ValueDisplayFormat = '%.0f';
+            app.input2.FontSize = 16;
+            app.input2.Position = [134 129 135 29];
+            app.input2.Value = 16;
+
+            % Create Label_3
+            app.Label_3 = uilabel(app.Panel_2);
+            app.Label_3.HorizontalAlignment = 'right';
+            app.Label_3.FontSize = 16;
+            app.Label_3.FontWeight = 'bold';
+            app.Label_3.Position = [22 91 87 26];
+            app.Label_3.Text = '采样声道数';
+
+            % Create input3
+            app.input3 = uieditfield(app.Panel_2, 'numeric');
+            app.input3.ValueDisplayFormat = '%.0f';
+            app.input3.FontSize = 16;
+            app.input3.Position = [134 90 135 29];
+            app.input3.Value = 1;
+
+            % Create Label_4
+            app.Label_4 = uilabel(app.Panel_2);
+            app.Label_4.HorizontalAlignment = 'right';
+            app.Label_4.FontSize = 16;
+            app.Label_4.FontWeight = 'bold';
+            app.Label_4.Position = [7 53 103 26];
+            app.Label_4.Text = '采样设备序号';
+
+            % Create input4
+            app.input4 = uieditfield(app.Panel_2, 'numeric');
+            app.input4.ValueDisplayFormat = '%.0f';
+            app.input4.FontSize = 16;
+            app.input4.Position = [134 52 135 29];
+            app.input4.Value = 1;
+
+            % Create Label_5
+            app.Label_5 = uilabel(app.Panel_2);
+            app.Label_5.HorizontalAlignment = 'right';
+            app.Label_5.FontSize = 16;
+            app.Label_5.FontWeight = 'bold';
+            app.Label_5.Position = [4 16 103 26];
+            app.Label_5.Text = '采样总时间';
+
+            % Create input5
+            app.input5 = uieditfield(app.Panel_2, 'numeric');
+            app.input5.ValueDisplayFormat = '%.0f';
+            app.input5.FontSize = 16;
+            app.input5.Position = [133 15 135 29];
+            app.input5.Value = 15;
+        end
+    end
+
+    methods (Access = public)
+
+        % Construct app
+        function app = voice_analyzer_app_NI
+
+            % Create and configure components
+            createComponents(app)
+
+            % Register the app with App Designer
+            registerApp(app, app.VoiceAnalyzerUIFigure)
+
+            if nargout == 0
+                clear app
+            end
+        end
+
+        % Code that executes before app deletion
+        function delete(app)
+
+            % Delete UIFigure when app is deleted
+            delete(app.VoiceAnalyzerUIFigure)
+        end
+    end
+end
